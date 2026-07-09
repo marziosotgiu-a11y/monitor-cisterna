@@ -4,258 +4,242 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Monitor Cisterna</title>
-    <!-- Importiamo Tailwind CSS per la grafica -->
+    <!-- Tailwind CSS per lo stile -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* Animazioni personalizzate */
-        @keyframes pulse-soft {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.05); opacity: 0.8; }
-        }
-        .animate-pulse-soft { animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        .hidden { display: none !important; }
-    </style>
+    <!-- Lucide Icons per le icone -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel per processare JSX nel browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="bg-slate-50 font-sans min-h-screen text-slate-800">
+<body class="bg-slate-100 font-sans antialiased text-slate-800 selection:bg-blue-200">
+    <div id="root"></div>
 
-    <!-- SCHERMATA DI CONFIGURAZIONE (Visibile solo se mancano i dati) -->
-    <div id="config-screen" class="min-h-screen flex flex-col items-center justify-center p-4 hidden">
-        <div class="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
-            <div class="flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-6 mx-auto">
-                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.25c-5.385 4.362-8.25 8.986-8.25 13.125 0 4.207 3.694 7.625 8.25 7.625 4.556 0 8.25-3.418 8.25-7.625 0-4.139-2.865-8.763-8.25-13.125z"></path></svg>
-            </div>
-            <h1 class="text-2xl font-bold text-center mb-2">Monitor Acqua</h1>
-            <p class="text-slate-500 text-center mb-8">Inserisci le credenziali di Supabase per connettere la tua cisterna.</p>
-            
-            <form id="config-form" class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">URL Tabella Supabase</label>
-                    <input type="url" id="input-url" required placeholder="es. https://xyz.supabase.co/rest/v1/lettura_acqua" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Chiave API (anon)</label>
-                    <input type="password" id="input-key" required placeholder="eyJhbGciOiJIUzI1NiIsInR5c..." class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all">
-                </div>
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors mt-4">
-                    Connetti Dashboard
-                </button>
-            </form>
-        </div>
-    </div>
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
 
-    <!-- DASHBOARD PRINCIPALE -->
-    <div id="dashboard-screen" class="max-w-4xl mx-auto space-y-6 p-4 md:p-8 hidden">
-        
-        <!-- Header -->
-        <header class="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-            <div class="flex items-center gap-3">
-                <div class="p-2 bg-blue-500 text-white rounded-lg">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.25c-5.385 4.362-8.25 8.986-8.25 13.125 0 4.207 3.694 7.625 8.25 7.625 4.556 0 8.25-3.418 8.25-7.625 0-4.139-2.865-8.763-8.25-13.125z"></path></svg>
-                </div>
-                <h1 class="text-xl font-bold">Cisterna Casa</h1>
-            </div>
-            <button id="btn-reset" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-all" title="Impostazioni">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-            </button>
-        </header>
+        function App() {
+            const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('water_supa_url') || '');
+            const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('water_supa_key') || '');
+            const [isConfigured, setIsConfigured] = useState(!!localStorage.getItem('water_supa_url'));
 
-        <!-- Errore di connessione (nascosto di default) -->
-        <div id="error-box" class="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg items-center gap-3 hidden">
-            <p id="error-text" class="text-red-700"></p>
-        </div>
+            const [currentFlow, setCurrentFlow] = useState(0);
+            const [isActive, setIsActive] = useState(false);
+            const [totalLiters, setTotalLiters] = useState(0);
+            const [history, setHistory] = useState([]);
+            const [lastUpdate, setLastUpdate] = useState(null);
+            const [error, setError] = useState(null);
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            <!-- Card Stato Principale -->
-            <div id="status-card" class="bg-white rounded-3xl shadow-sm overflow-hidden border border-slate-100 flex flex-col items-center justify-center p-8 text-center min-h-[300px] relative transition-all duration-500">
-                <div id="status-badge" class="absolute top-4 right-4 flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full bg-slate-100 text-slate-500">
-                    <div id="status-dot" class="w-2 h-2 rounded-full bg-slate-400"></div>
-                    <span id="status-badge-text">STANDBY</span>
-                </div>
+            const handleSaveConfig = (e) => {
+                e.preventDefault();
+                localStorage.setItem('water_supa_url', supabaseUrl.trim());
+                localStorage.setItem('water_supa_key', supabaseKey.trim());
+                setIsConfigured(true);
+                setError(null);
+            };
 
-                <div id="icon-container" class="w-32 h-32 rounded-full flex items-center justify-center mb-6 transition-all duration-500 bg-slate-100 text-slate-300">
-                    <svg id="icon-water" class="w-16 h-16 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.25c-5.385 4.362-8.25 8.986-8.25 13.125 0 4.207 3.694 7.625 8.25 7.625 4.556 0 8.25-3.418 8.25-7.625 0-4.139-2.865-8.763-8.25-13.125z"></path></svg>
-                    <svg id="icon-power" class="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                </div>
-                
-                <h2 id="status-title" class="text-3xl font-bold mb-2">Nessun Flusso</h2>
-                <p id="status-desc" class="text-slate-500">Condotta diretta chiusa o assenza di rete.</p>
-            </div>
+            const handleResetConfig = () => {
+                localStorage.removeItem('water_supa_url');
+                localStorage.removeItem('water_supa_key');
+                setIsConfigured(false);
+                setHistory([]);
+                setCurrentFlow(0);
+                setTotalLiters(0);
+                setIsActive(false);
+            };
 
-            <!-- Card Dati Numerici -->
-            <div class="space-y-6 flex flex-col">
-                <div class="bg-white rounded-3xl shadow-sm p-6 border border-slate-100">
-                    <div class="flex items-center gap-2 text-slate-500 mb-4">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <h3 class="font-semibold">Portata Attuale</h3>
-                    </div>
-                    <div class="flex items-baseline gap-2">
-                        <span id="flow-value" class="text-6xl font-black text-slate-300 transition-colors duration-300">0.00</span>
-                        <span class="text-xl font-bold text-slate-400">L/min</span>
-                    </div>
-                    <div class="mt-4 pt-4 border-t border-slate-100 text-sm text-slate-400 flex items-center gap-2">
-                        <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        Ultimo aggiornamento: <span id="last-update">...</span>
-                    </div>
-                </div>
+            const fetchData = useCallback(async () => {
+                if (!isConfigured) return;
 
-                <!-- Ultime letture -->
-                <div class="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex-1 max-h-[220px] overflow-y-auto">
-                    <div class="flex items-center gap-2 text-slate-500 mb-4 sticky top-0 bg-white pb-2">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        <h3 class="font-semibold">Ultime letture</h3>
-                    </div>
-                    <div id="history-list" class="space-y-3">
-                        <p class="text-slate-400 text-sm text-center py-4">Nessun dato registrato</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+                try {
+                    const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&limit=15`, {
+                        headers: {
+                            'apikey': supabaseKey,
+                            'Authorization': `Bearer ${supabaseKey}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=representation'
+                        }
+                    });
 
-    <script>
-        // --- LOGICA E GESTIONE DATI ---
-        const configScreen = document.getElementById('config-screen');
-        const dashboardScreen = document.getElementById('dashboard-screen');
-        const configForm = document.getElementById('config-form');
-        const btnReset = document.getElementById('btn-reset');
-        const errorBox = document.getElementById('error-box');
-        const errorText = document.getElementById('error-text');
-        
-        let pollingInterval = null;
+                    if (!response.ok) throw new Error(`Errore: ${response.status}`);
 
-        // Inizializzazione all'apertura
-        function init() {
-            const url = localStorage.getItem('water_supa_url');
-            const key = localStorage.getItem('water_supa_key');
-            
-            if (url && key) {
-                configScreen.classList.add('hidden');
-                dashboardScreen.classList.remove('hidden');
-                startPolling(url, key);
-            } else {
-                configScreen.classList.remove('hidden');
-                dashboardScreen.classList.add('hidden');
-            }
-        }
-
-        // Salvataggio Configurazione
-        configForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const url = document.getElementById('input-url').value.trim();
-            const key = document.getElementById('input-key').value.trim();
-            localStorage.setItem('water_supa_url', url);
-            localStorage.setItem('water_supa_key', key);
-            init();
-        });
-
-        // Reset Configurazione
-        btnReset.addEventListener('click', () => {
-            localStorage.removeItem('water_supa_url');
-            localStorage.removeItem('water_supa_key');
-            if (pollingInterval) clearInterval(pollingInterval);
-            init();
-        });
-
-        // Recupero Dati da Supabase
-        async function fetchSupabaseData(url, key) {
-            try {
-                const response = await fetch(`${url}?select=*&order=id.desc&limit=5`, {
-                    headers: {
-                        'apikey': key,
-                        'Authorization': `Bearer ${key}`,
-                        'Content-Type': 'application/json'
+                    const data = await response.json();
+                    
+                    if (data && data.length > 0) {
+                        const latest = data[0];
+                        setCurrentFlow(latest.portata || 0);
+                        setIsActive(latest.in_funzione || false);
+                        // Leggiamo i litri caricati (se la colonna esiste, altrimenti 0)
+                        setTotalLiters(latest.litri_caricati || 0);
+                        setHistory(data);
+                        setLastUpdate(new Date());
+                        setError(null);
                     }
-                });
+                } catch (err) {
+                    setError("Impossibile connettersi al database. Verifica i dati di Supabase.");
+                }
+            }, [supabaseUrl, supabaseKey, isConfigured]);
 
-                if (!response.ok) throw new Error(`Errore Server: ${response.status}`);
-                
-                const data = await response.json();
-                updateUI(data);
-                errorBox.classList.add('hidden');
-            } catch (err) {
-                console.error(err);
-                errorText.textContent = "Errore di connessione. Verifica che l'URL e la chiave siano corretti.";
-                errorBox.classList.remove('hidden');
-                errorBox.classList.add('flex');
-            }
-        }
+            useEffect(() => {
+                fetchData();
+                if (isConfigured) {
+                    const interval = setInterval(fetchData, 3000);
+                    return () => clearInterval(interval);
+                }
+            }, [fetchData, isConfigured]);
 
-        // Avvio aggiornamento automatico
-        function startPolling(url, key) {
-            fetchSupabaseData(url, key); // Prima chiamata immediata
-            if (pollingInterval) clearInterval(pollingInterval);
-            pollingInterval = setInterval(() => fetchSupabaseData(url, key), 3000);
-        }
-
-        // Aggiornamento della Grafica
-        function updateUI(data) {
-            if (!data || data.length === 0) return;
-            
-            const latest = data[0];
-            const isActive = latest.in_funzione;
-            const flow = Number(latest.portata).toFixed(2);
-            
-            // Aggiorna Numero
-            const flowValueEl = document.getElementById('flow-value');
-            flowValueEl.textContent = flow;
-            flowValueEl.className = `text-6xl font-black transition-colors duration-300 ${isActive ? 'text-blue-600' : 'text-slate-300'}`;
-            
-            // Aggiorna Stato Visivo
-            const badge = document.getElementById('status-badge');
-            const dot = document.getElementById('status-dot');
-            const badgeText = document.getElementById('status-badge-text');
-            const iconContainer = document.getElementById('icon-container');
-            const iconWater = document.getElementById('icon-water');
-            const iconPower = document.getElementById('icon-power');
-            const title = document.getElementById('status-title');
-            const desc = document.getElementById('status-desc');
-
-            if (isActive) {
-                badge.className = "absolute top-4 right-4 flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full bg-green-100 text-green-700";
-                dot.className = "w-2 h-2 rounded-full bg-green-500 animate-pulse";
-                badgeText.textContent = "ONLINE";
-                
-                iconContainer.className = "w-32 h-32 rounded-full flex items-center justify-center mb-6 bg-blue-100 text-blue-500 shadow-[0_0_40px_rgba(59,130,246,0.3)] animate-pulse-soft";
-                iconWater.classList.remove('hidden');
-                iconPower.classList.add('hidden');
-                
-                title.textContent = "Acqua in Ingresso!";
-                desc.textContent = "La condotta diretta sta riempiendo il serbatoio.";
-            } else {
-                badge.className = "absolute top-4 right-4 flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full bg-slate-100 text-slate-500";
-                dot.className = "w-2 h-2 rounded-full bg-slate-400";
-                badgeText.textContent = "STANDBY";
-                
-                iconContainer.className = "w-32 h-32 rounded-full flex items-center justify-center mb-6 bg-slate-100 text-slate-300 transition-all duration-500";
-                iconWater.classList.add('hidden');
-                iconPower.classList.remove('hidden');
-                
-                title.textContent = "Nessun Flusso";
-                desc.textContent = "Condotta diretta chiusa o assenza di rete.";
-            }
-
-            // Aggiorna Orario
-            const now = new Date();
-            document.getElementById('last-update').textContent = now.toLocaleTimeString('it-IT');
-
-            // Aggiorna Lista Storico
-            const historyList = document.getElementById('history-list');
-            historyList.innerHTML = '';
-            data.forEach(record => {
-                const isRecActive = record.in_funzione;
-                const recFlow = Number(record.portata).toFixed(2);
-                historyList.innerHTML += `
-                    <div class="flex justify-between items-center text-sm p-2 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0">
-                        <span class="text-slate-500 font-medium text-xs">#${record.id}</span>
-                        <span class="font-bold ${isRecActive ? 'text-blue-600' : 'text-slate-400'}">${recFlow} L/min</span>
-                    </div>
-                `;
+            useEffect(() => {
+                lucide.createIcons();
             });
+
+            if (!isConfigured) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                        <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md w-full border border-slate-100">
+                            <div className="flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-6 mx-auto">
+                                <i data-lucide="droplets" className="w-8 h-8"></i>
+                            </div>
+                            <h1 className="text-2xl font-bold text-center mb-2">Monitor Cisterna</h1>
+                            <p className="text-slate-500 text-center mb-8">Connetti il tuo database Supabase.</p>
+                            
+                            <form onSubmit={handleSaveConfig} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-semibold text-slate-700 mb-1">URL Tabella</label>
+                                    <input type="url" required placeholder="https://...supabase.co/rest/v1/lettura_acqua"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                        value={supabaseUrl} onChange={(e) => setSupabaseUrl(e.target.value)} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-slate-700 mb-1">Chiave API (anon)</label>
+                                    <input type="password" required placeholder="eyJhb..."
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                        value={supabaseKey} onChange={(e) => setSupabaseKey(e.target.value)} />
+                                </div>
+                                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition-colors mt-2 shadow-lg shadow-blue-200">
+                                    Connetti
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
+                    <header className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl shadow-sm">
+                                <i data-lucide="droplets"></i>
+                            </div>
+                            <h1 className="text-xl font-bold">Cisterna Casa</h1>
+                        </div>
+                        <button onClick={handleResetConfig} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-all" title="Impostazioni">
+                            <i data-lucide="settings"></i>
+                        </button>
+                    </header>
+
+                    {error && (
+                        <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3 text-red-600">
+                            <i data-lucide="alert-circle"></i>
+                            <p className="font-medium">{error}</p>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Stato Impianto */}
+                        <div className="bg-white rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center p-8 text-center relative min-h-[320px]">
+                            <div className={`absolute top-5 right-5 flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-full ${isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></div>
+                                {isActive ? 'ONLINE' : 'STANDBY'}
+                            </div>
+
+                            <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 transition-all duration-700 ${isActive ? 'bg-blue-50 text-blue-500 shadow-[0_0_50px_rgba(59,130,246,0.2)]' : 'bg-slate-50 text-slate-300'}`}>
+                                {isActive ? <i data-lucide="waves" className="w-16 h-16 animate-bounce"></i> : <i data-lucide="power-off" className="w-16 h-16"></i>}
+                            </div>
+                            
+                            <h2 className="text-3xl font-extrabold text-slate-800 mb-2">
+                                {isActive ? 'Acqua in Ingresso' : 'Flusso Assente'}
+                            </h2>
+                            <p className="text-slate-500 font-medium">
+                                {isActive ? 'La rete diretta sta alimentando il serbatoio.' : 'Nessuna fornitura idrica al momento.'}
+                            </p>
+                        </div>
+
+                        <div className="space-y-6 flex flex-col">
+                            {/* Dati in tempo reale */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex flex-col justify-center">
+                                    <div className="flex items-center gap-2 text-slate-400 mb-2">
+                                        <i data-lucide="activity" className="w-5 h-5"></i>
+                                        <h3 className="font-semibold text-sm uppercase tracking-wider">Portata</h3>
+                                    </div>
+                                    <div className="flex items-baseline gap-1">
+                                        <span className={`text-4xl font-black tracking-tight ${isActive ? 'text-blue-600' : 'text-slate-300'}`}>
+                                            {currentFlow.toFixed(1)}
+                                        </span>
+                                        <span className="text-sm font-bold text-slate-400">L/m</span>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex flex-col justify-center relative overflow-hidden">
+                                    <div className="absolute -right-4 -bottom-4 opacity-5 text-blue-600">
+                                        <i data-lucide="glass-water" className="w-32 h-32"></i>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-blue-500 mb-2 relative z-10">
+                                        <i data-lucide="glass-water" className="w-5 h-5"></i>
+                                        <h3 className="font-semibold text-sm uppercase tracking-wider">Caricati</h3>
+                                    </div>
+                                    <div className="flex items-baseline gap-1 relative z-10">
+                                        <span className={`text-4xl font-black tracking-tight ${totalLiters > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
+                                            {totalLiters.toFixed(1)}
+                                        </span>
+                                        <span className="text-sm font-bold text-slate-400">Litri</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Cronologia */}
+                            <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex-grow">
+                                <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+                                    <div className="flex items-center gap-2 text-slate-400">
+                                        <i data-lucide="history" className="w-5 h-5"></i>
+                                        <h3 className="font-semibold text-sm uppercase tracking-wider">Ultime Letture</h3>
+                                    </div>
+                                    {lastUpdate && (
+                                        <span className="text-xs font-semibold text-green-500 bg-green-50 px-2 py-1 rounded-md flex items-center gap-1">
+                                            <i data-lucide="check-circle-2" className="w-3 h-3"></i> 
+                                            {lastUpdate.toLocaleTimeString()}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    {history.length > 0 ? history.slice(0, 4).map((record) => (
+                                        <div key={record.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-slate-100">
+                                            <span className="text-slate-400 font-mono text-sm">{new Date(record.creato_il).toLocaleTimeString()}</span>
+                                            <div className="flex gap-4">
+                                                <span className={`font-bold ${record.in_funzione ? 'text-blue-600' : 'text-slate-400'}`}>
+                                                    {Number(record.portata).toFixed(1)} <span className="text-xs opacity-70">L/m</span>
+                                                </span>
+                                                <span className="font-bold text-slate-600 w-16 text-right">
+                                                    {record.litri_caricati ? Number(record.litri_caricati).toFixed(1) : '0.0'} <span className="text-xs opacity-70">L</span>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )) : (
+                                        <p className="text-slate-400 text-sm text-center py-6">Nessun dato registrato</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
         }
 
-        // Lancia il sistema
-        init();
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
