@@ -63,46 +63,62 @@
             };
 
             const fetchData = useCallback(async () => {
-                if (!isConfigured) return;
+    if (!isConfigured) return;
 
-                try {
-                    // Aumentato il limite a 500 per calcolare statistiche su un periodo più lungo
-                    const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&limit=500`, {
-                        headers: {
-                            'apikey': supabaseKey,
-                            'Authorization': `Bearer ${supabaseKey}`,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=representation'
-                        }
-                    });
+    try {
+        // 1. Calcoliamo l'orario di "mezzanotte di oggi"
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        // Convertiamo la data nel formato compreso dal database (ISO 8601)
+        const isoStart = startOfDay.toISOString();
 
-                    if (!response.ok) throw new Error(`Errore: ${response.status}`);
+        // 2. Chiediamo a Supabase solo i record creati DOPO la mezzanotte di oggi
+        // Abbiamo sostituito limit=500 con creato_il=gte.${isoStart} (gte = Greater Than or Equal)
+        // Manteniamo un limite alto (es. 2000) per evitare di bloccare il server se ci sono troppi dati
+        const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}&limit=2000`, {
+            headers: {
+                'apikey': supabaseKey,
+                'Authorization': `Bearer ${supabaseKey}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            }
+        });
 
-                    const data = await response.json();
-                    
-                    if (data && data.length > 0) {
-                        const latest = data[0];
-                        setCurrentFlow(latest.portata || 0);
-                        setIsActive(latest.in_funzione || false);
-                        setTotalLiters(latest.litri_caricati || 0);
-                        setHistory(data);
+        if (!response.ok) throw new Error(`Errore: ${response.status}`);
 
-                        // Formattiamo i dati per Recharts, usando creato_il
-                        const formattedForChart = data.map(item => ({
-                            orario: new Date(item.creato_il).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
-                            portata: Number(item.portata)
-                        })).reverse(); 
-                        
-                        setChartData(formattedForChart);
+        const data = await response.json();
+        
+        if (data && data.length > 0) {
+            const latest = data[0];
+            setCurrentFlow(latest.portata || 0);
+            setIsActive(latest.in_funzione || false);
+            setTotalLiters(latest.litri_caricati || 0);
+            setHistory(data);
 
-                        setLastUpdate(new Date());
-                        setError(null);
-                    }
-                } catch (err) {
-                    setError("Impossibile connettersi al database. Verifica i dati di Supabase.");
-                }
-            }, [supabaseUrl, supabaseKey, isConfigured]);
+            // Formattiamo i dati per Recharts
+            const formattedForChart = data.map(item => ({
+                orario: new Date(item.creato_il).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+                portata: Number(item.portata)
+            })).reverse(); 
+            
+            setChartData(formattedForChart);
 
+            setLastUpdate(new Date());
+            setError(null);
+        } else {
+            // Se non ci sono dati per oggi (es. subito dopo mezzanotte), azzeriamo l'interfaccia
+            setHistory([]);
+            setChartData([]);
+            setCurrentFlow(0);
+            setTotalLiters(0);
+            setIsActive(false);
+            setLastUpdate(new Date());
+        }
+    } catch (err) {
+        setError("Impossibile connettersi al database. Verifica i dati di Supabase.");
+    }
+}, [supabaseUrl, supabaseKey, isConfigured]);
+            
             useEffect(() => {
                 fetchData();
                 if (isConfigured) {
