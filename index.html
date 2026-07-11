@@ -38,7 +38,6 @@
             const [totalLiters, setTotalLiters] = useState(0);
             const [history, setHistory] = useState([]);
             
-            // LA CORREZIONE È QUI: Variabile per memorizzare i dati storici del grafico
             const [chartData, setChartData] = useState([]); 
             
             const [lastUpdate, setLastUpdate] = useState(null);
@@ -67,8 +66,8 @@
                 if (!isConfigured) return;
 
                 try {
-                    // Ora peschiamo le ultime 50 letture per riempire il grafico
-                    const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&limit=50`, {
+                    // Aumentato il limite a 500 per calcolare statistiche su un periodo più lungo
+                    const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&limit=500`, {
                         headers: {
                             'apikey': supabaseKey,
                             'Authorization': `Bearer ${supabaseKey}`,
@@ -88,7 +87,7 @@
                         setTotalLiters(latest.litri_caricati || 0);
                         setHistory(data);
 
-                        // Formattiamo i dati specificamente per Recharts (dalla più vecchia alla più nuova)
+                        // Formattiamo i dati per Recharts, usando creato_il
                         const formattedForChart = data.map(item => ({
                             orario: new Date(item.creato_il).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
                             portata: Number(item.portata)
@@ -117,6 +116,43 @@
                     window.lucide.createIcons();
                 }
             });
+
+            // Calcolo delle statistiche avanzate basato sullo storico
+            const stats = React.useMemo(() => {
+                if (!history || history.length === 0) return null;
+
+                const newest = history[0];
+                const oldest = history[history.length - 1];
+                
+                // Modificato qui per usare creato_il
+                const startDate = new Date(oldest.creato_il);
+                const endDate = new Date(newest.creato_il);
+                
+                const formatDate = (d) => {
+                    const time = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                    const date = d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+                    return `${time} del ${date}`;
+                };
+
+                const activeReadings = history.filter(r => r.in_funzione);
+                const activeCount = activeReadings.length;
+                
+                const maxFlow = Math.max(...history.map(r => Number(r.portata) || 0));
+                const maxLiters = Math.max(...history.map(r => Number(r.litri_caricati) || 0));
+                
+                const sumFlowActive = activeReadings.reduce((sum, r) => sum + (Number(r.portata) || 0), 0);
+                const avgFlow = activeCount > 0 ? (sumFlowActive / activeCount) : 0;
+
+                return {
+                    start: formatDate(startDate),
+                    end: formatDate(endDate),
+                    total: history.length,
+                    active: activeCount,
+                    liters: maxLiters.toFixed(2),
+                    maxFlow: maxFlow.toFixed(2),
+                    avgFlow: avgFlow.toFixed(2)
+                };
+            }, [history]);
 
             if (!isConfigured) {
                 return (
@@ -241,6 +277,7 @@
                                 <div className="space-y-2">
                                     {history.length > 0 ? history.slice(0, 4).map((record) => (
                                         <div key={record.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-slate-100">
+                                            {/* Modificato qui per usare creato_il */}
                                             <span className="text-slate-400 font-mono text-sm">{new Date(record.creato_il).toLocaleTimeString()}</span>
                                             <div className="flex gap-4">
                                                 <span className={`font-bold ${record.in_funzione ? 'text-blue-600' : 'text-slate-400'}`}>
@@ -259,7 +296,55 @@
                         </div>
                     </div>
 
-                    {}
+                    {/* Sezione Statistiche Principali */}
+                    {stats && (
+                        <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 mt-6">
+                            <div className="flex items-center gap-3 text-slate-700 mb-6 border-b border-slate-100 pb-4">
+                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                                    <i data-lucide="clipboard-list" className="w-5 h-5"></i>
+                                </div>
+                                <h3 className="font-bold text-lg">Statistiche Principali</h3>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <div>
+                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Periodo di rilevazione</p>
+                                        <p className="text-sm font-medium text-slate-700">
+                                            Da <span className="font-bold">{stats.start}</span><br/>
+                                            alle <span className="font-bold">{stats.end}</span>
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Totale letture</p>
+                                        <p className="text-lg font-bold text-slate-700">{stats.total} misurazioni</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Stato del sistema</p>
+                                        <p className="text-sm font-medium text-slate-700">
+                                            L'impianto è risultato in funzione in <span className="font-bold text-blue-600">{stats.active}</span> su {stats.total} rilevazioni.
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                                        <p className="text-sm text-slate-500 font-semibold">Litri totali caricati</p>
+                                        <p className="text-lg font-bold text-blue-600">{stats.liters} L</p>
+                                    </div>
+                                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                                        <p className="text-sm text-slate-500 font-semibold">Portata max raggiunta</p>
+                                        <p className="text-lg font-bold text-slate-700">{stats.maxFlow} <span className="text-xs font-normal text-slate-400">L/m</span></p>
+                                    </div>
+                                    <div className="flex justify-between items-center pb-1">
+                                        <p className="text-sm text-slate-500 font-semibold">Portata media (attiva)</p>
+                                        <p className="text-lg font-bold text-slate-700">{stats.avgFlow} <span className="text-xs font-normal text-slate-400">L/m</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {window.Recharts && (
                         <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 mt-6">
                             <div className="flex items-center gap-3 text-slate-700 mb-6 border-b border-slate-100 pb-4">
