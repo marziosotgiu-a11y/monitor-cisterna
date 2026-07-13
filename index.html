@@ -92,7 +92,8 @@
             const latest = data[0];
             setCurrentFlow(latest.portata || 0);
             setIsActive(latest.in_funzione || false);
-            setTotalLiters(latest.litri_caricati || 0);
+            const calculatedTotal = data.reduce((sum, item) => sum + (Number(item.litri_caricati) || 0), 0);
+            setTotalLiters(calculatedTotal);
             setHistory(data);
 
             // Formattiamo i dati per Recharts
@@ -154,7 +155,7 @@
                 const activeCount = activeReadings.length;
                 
                 const maxFlow = Math.max(...history.map(r => Number(r.portata) || 0));
-                const maxLiters = Math.max(...history.map(r => Number(r.litri_caricati) || 0));
+                const sumLiters = history.reduce((sum, r) => sum + (Number(r.litri_caricati) || 0), 0);
                 
                 const sumFlowActive = activeReadings.reduce((sum, r) => sum + (Number(r.portata) || 0), 0);
                 const avgFlow = activeCount > 0 ? (sumFlowActive / activeCount) : 0;
@@ -164,7 +165,7 @@
                     end: formatDate(endDate),
                     total: history.length,
                     active: activeCount,
-                    liters: maxLiters.toFixed(2),
+                    liters: sumLiters.toFixed(2),
                     maxFlow: maxFlow.toFixed(2),
                     avgFlow: avgFlow.toFixed(2)
                 };
