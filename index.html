@@ -23,7 +23,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect, useCallback, useMemo } = React;
         
         // Assicuriamoci che la libreria dei grafici si carichi correttamente
         const { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts || {};
@@ -63,62 +63,76 @@
             };
 
             const fetchData = useCallback(async () => {
-    if (!isConfigured) return;
+                if (!isConfigured) return;
 
-    try {
-        // 1. Calcoliamo l'orario di "mezzanotte di oggi"
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-        // Convertiamo la data nel formato compreso dal database (ISO 8601)
-        const isoStart = startOfDay.toISOString();
+                try {
+                    // 1. Calcoliamo l'orario di "mezzanotte di oggi"
+                    const startOfDay = new Date();
+                    startOfDay.setHours(0, 0, 0, 0);
+                    const isoStart = startOfDay.toISOString();
 
-        // 2. Chiediamo a Supabase solo i record creati DOPO la mezzanotte di oggi
-        // Abbiamo sostituito limit=500 con creato_il=gte.${isoStart} (gte = Greater Than or Equal)
-        // Manteniamo un limite alto (es. 2000) per evitare di bloccare il server se ci sono troppi dati
-        const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}&limit=2000`, {
-            headers: {
-                'apikey': supabaseKey,
-                'Authorization': `Bearer ${supabaseKey}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            }
-        });
+                    // 2. Chiediamo a Supabase solo i record creati DOPO la mezzanotte di oggi
+                    const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}&limit=2000`, {
+                        headers: {
+                            'apikey': supabaseKey,
+                            'Authorization': `Bearer ${supabaseKey}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=representation'
+                        }
+                    });
 
-        if (!response.ok) throw new Error(`Errore: ${response.status}`);
+                    if (!response.ok) throw new Error(`Errore: ${response.status}`);
 
-        const data = await response.json();
-        
-        if (data && data.length > 0) {
-            const latest = data[0];
-            setCurrentFlow(latest.portata || 0);
-            setIsActive(latest.in_funzione || false);
-            const calculatedTotal = data.reduce((sum, item) => sum + (Number(item.litri_caricati) || 0), 0);
-            setTotalLiters(calculatedTotal);
-            setHistory(data);
+                    const data = await response.json();
+                    
+                    if (data && data.length > 0) {
+                        const latest = data[0];
+                        setCurrentFlow(latest.portata || 0);
+                        setIsActive(latest.in_funzione || false);
+                        
+                        // --- NUOVO CALCOLO CORRETTO DEI LITRI ---
+                        let calculatedTotal = 0;
+                        let peak = 0;
+                        // L'array 'data' ha il record più nuovo a indice 0. 
+                        // Lo cicliamo al contrario (dal più vecchio al più nuovo).
+                        for (let i = data.length - 1; i >= 0; i--) {
+                            const litri = Number(data[i].litri_caricati) || 0;
+                            if (litri >= peak) {
+                                peak = litri; // La sessione sta caricando, aggiorniamo il picco
+                            } else {
+                                calculatedTotal += peak; // Reset rilevato! Sommiamo il totale della sessione precedente
+                                peak = litri; // Inizia una nuova sessione
+                            }
+                        }
+                        calculatedTotal += peak; // Aggiungiamo il carico dell'ultimissima sessione
+                        // ----------------------------------------
+                        
+                        setTotalLiters(calculatedTotal);
+                        setHistory(data);
 
-            // Formattiamo i dati per Recharts
-            const formattedForChart = data.map(item => ({
-                orario: new Date(item.creato_il).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
-                portata: Number(item.portata)
-            })).reverse(); 
-            
-            setChartData(formattedForChart);
+                        // Formattiamo i dati per Recharts
+                        const formattedForChart = data.map(item => ({
+                            orario: new Date(item.creato_il).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+                            portata: Number(item.portata)
+                        })).reverse(); 
+                        
+                        setChartData(formattedForChart);
 
-            setLastUpdate(new Date());
-            setError(null);
-        } else {
-            // Se non ci sono dati per oggi (es. subito dopo mezzanotte), azzeriamo l'interfaccia
-            setHistory([]);
-            setChartData([]);
-            setCurrentFlow(0);
-            setTotalLiters(0);
-            setIsActive(false);
-            setLastUpdate(new Date());
-        }
-    } catch (err) {
-        setError("Impossibile connettersi al database. Verifica i dati di Supabase.");
-    }
-}, [supabaseUrl, supabaseKey, isConfigured]);
+                        setLastUpdate(new Date());
+                        setError(null);
+                    } else {
+                        // Se non ci sono dati per oggi, azzeriamo l'interfaccia
+                        setHistory([]);
+                        setChartData([]);
+                        setCurrentFlow(0);
+                        setTotalLiters(0);
+                        setIsActive(false);
+                        setLastUpdate(new Date());
+                    }
+                } catch (err) {
+                    setError("Impossibile connettersi al database. Verifica i dati di Supabase.");
+                }
+            }, [supabaseUrl, supabaseKey, isConfigured]);
             
             useEffect(() => {
                 fetchData();
@@ -135,13 +149,12 @@
             });
 
             // Calcolo delle statistiche avanzate basato sullo storico
-            const stats = React.useMemo(() => {
+            const stats = useMemo(() => {
                 if (!history || history.length === 0) return null;
 
                 const newest = history[0];
                 const oldest = history[history.length - 1];
                 
-                // Modificato qui per usare creato_il
                 const startDate = new Date(oldest.creato_il);
                 const endDate = new Date(newest.creato_il);
                 
@@ -155,8 +168,6 @@
                 const activeCount = activeReadings.length;
                 
                 const maxFlow = Math.max(...history.map(r => Number(r.portata) || 0));
-                const sumLiters = history.reduce((sum, r) => sum + (Number(r.litri_caricati) || 0), 0);
-                
                 const sumFlowActive = activeReadings.reduce((sum, r) => sum + (Number(r.portata) || 0), 0);
                 const avgFlow = activeCount > 0 ? (sumFlowActive / activeCount) : 0;
 
@@ -165,11 +176,11 @@
                     end: formatDate(endDate),
                     total: history.length,
                     active: activeCount,
-                    liters: sumLiters.toFixed(2),
+                    liters: totalLiters.toFixed(2), // Adesso utilizza il valore corretto calcolato precedentemente
                     maxFlow: maxFlow.toFixed(2),
                     avgFlow: avgFlow.toFixed(2)
                 };
-            }, [history]);
+            }, [history, totalLiters]);
 
             if (!isConfigured) {
                 return (
@@ -294,7 +305,6 @@
                                 <div className="space-y-2">
                                     {history.length > 0 ? history.slice(0, 4).map((record) => (
                                         <div key={record.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-slate-100">
-                                            {/* Modificato qui per usare creato_il */}
                                             <span className="text-slate-400 font-mono text-sm">{new Date(record.creato_il).toLocaleTimeString()}</span>
                                             <div className="flex gap-4">
                                                 <span className={`font-bold ${record.in_funzione ? 'text-blue-600' : 'text-slate-400'}`}>
