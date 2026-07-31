@@ -24,22 +24,21 @@
 
     <script type="text/babel">
         const { useState, useEffect, useCallback, useMemo } = React;
-        
-        // Assicuriamoci che la libreria dei grafici si carichi correttamente
-        const { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts || {};
+        const { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } = window.Recharts || {};
 
         function App() {
             const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('water_supa_url') || '');
             const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('water_supa_key') || '');
             const [isConfigured, setIsConfigured] = useState(!!localStorage.getItem('water_supa_url'));
 
+            const [timeRange, setTimeRange] = useState('today'); // 'today', 'yesterday', 'week'
+            
             const [currentFlow, setCurrentFlow] = useState(0);
             const [isActive, setIsActive] = useState(false);
             const [totalLiters, setTotalLiters] = useState(0);
             const [history, setHistory] = useState([]);
             
             const [chartData, setChartData] = useState([]); 
-            
             const [lastUpdate, setLastUpdate] = useState(null);
             const [error, setError] = useState(null);
 
@@ -66,13 +65,33 @@
                 if (!isConfigured) return;
 
                 try {
-                    // 1. Calcoliamo l'orario di "mezzanotte di oggi"
-                    const startOfDay = new Date();
-                    startOfDay.setHours(0, 0, 0, 0);
-                    const isoStart = startOfDay.toISOString();
+                    // Impostazione del range di date
+                    let start = new Date();
+                    let end = new Date();
+                    let isoStart = null;
+                    let isoEnd = null;
 
-                    // 2. Chiediamo a Supabase solo i record creati DOPO la mezzanotte di oggi
-                    const response = await fetch(`${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}&limit=2000`, {
+                    if (timeRange === 'today') {
+                        start.setHours(0, 0, 0, 0);
+                        isoStart = start.toISOString();
+                    } else if (timeRange === 'yesterday') {
+                        start.setDate(start.getDate() - 1);
+                        start.setHours(0, 0, 0, 0);
+                        end.setDate(end.getDate() - 1);
+                        end.setHours(23, 59, 59, 999);
+                        isoStart = start.toISOString();
+                        isoEnd = end.toISOString();
+                    } else if (timeRange === 'week') {
+                        start.setDate(start.getDate() - 7);
+                        start.setHours(0, 0, 0, 0);
+                        isoStart = start.toISOString();
+                    }
+
+                    let url = `${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}`;
+                    if (isoEnd) url += `&creato_il=lte.${isoEnd}`;
+                    url += `&limit=5000`; // Limite alzato per supportare una settimana di dati
+
+                    const response = await fetch(url, {
                         headers: {
                             'apikey': supabaseKey,
                             'Authorization': `Bearer ${supabaseKey}`,
@@ -90,38 +109,40 @@
                         setCurrentFlow(latest.portata || 0);
                         setIsActive(latest.in_funzione || false);
                         
-                        // --- NUOVO CALCOLO CORRETTO DEI LITRI ---
+                        // Algoritmo di calcolo accurato dei litri basato sui picchi di fine sessione
                         let calculatedTotal = 0;
                         let peak = 0;
-                        // L'array 'data' ha il record più nuovo a indice 0. 
-                        // Lo cicliamo al contrario (dal più vecchio al più nuovo).
                         for (let i = data.length - 1; i >= 0; i--) {
                             const litri = Number(data[i].litri_caricati) || 0;
                             if (litri >= peak) {
-                                peak = litri; // La sessione sta caricando, aggiorniamo il picco
+                                peak = litri; 
                             } else {
-                                calculatedTotal += peak; // Reset rilevato! Sommiamo il totale della sessione precedente
-                                peak = litri; // Inizia una nuova sessione
+                                calculatedTotal += peak; 
+                                peak = litri; 
                             }
                         }
-                        calculatedTotal += peak; // Aggiungiamo il carico dell'ultimissima sessione
-                        // ----------------------------------------
+                        calculatedTotal += peak; 
                         
                         setTotalLiters(calculatedTotal);
                         setHistory(data);
 
-                        // Formattiamo i dati per Recharts
-                        const formattedForChart = data.map(item => ({
-                            orario: new Date(item.creato_il).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
-                            portata: Number(item.portata)
-                        })).reverse(); 
+                        // Formattazione per il grafico a doppio asse
+                        const formattedForChart = data.map(item => {
+                            const d = new Date(item.creato_il);
+                            const orarioStr = timeRange === 'week' 
+                                ? d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+                                : d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                            return {
+                                orario: orarioStr,
+                                portata: Number(item.portata),
+                                litri: Number(item.litri_caricati)
+                            };
+                        }).reverse(); 
                         
                         setChartData(formattedForChart);
-
                         setLastUpdate(new Date());
                         setError(null);
                     } else {
-                        // Se non ci sono dati per oggi, azzeriamo l'interfaccia
                         setHistory([]);
                         setChartData([]);
                         setCurrentFlow(0);
@@ -132,23 +153,24 @@
                 } catch (err) {
                     setError("Impossibile connettersi al database. Verifica i dati di Supabase.");
                 }
-            }, [supabaseUrl, supabaseKey, isConfigured]);
+            }, [supabaseUrl, supabaseKey, isConfigured, timeRange]);
             
             useEffect(() => {
                 fetchData();
-                if (isConfigured) {
-                    const interval = setInterval(fetchData, 3000);
-                    return () => clearInterval(interval);
+                let interval;
+                // Aggiorna in tempo reale solo se stiamo guardando "Oggi"
+                if (isConfigured && timeRange === 'today') {
+                    interval = setInterval(fetchData, 3000);
                 }
-            }, [fetchData, isConfigured]);
+                return () => {
+                    if (interval) clearInterval(interval);
+                };
+            }, [fetchData, isConfigured, timeRange]);
 
             useEffect(() => {
-                if (window.lucide) {
-                    window.lucide.createIcons();
-                }
+                if (window.lucide) window.lucide.createIcons();
             });
 
-            // Calcolo delle statistiche avanzate basato sullo storico
             const stats = useMemo(() => {
                 if (!history || history.length === 0) return null;
 
@@ -176,7 +198,7 @@
                     end: formatDate(endDate),
                     total: history.length,
                     active: activeCount,
-                    liters: totalLiters.toFixed(2), // Adesso utilizza il valore corretto calcolato precedentemente
+                    liters: totalLiters.toFixed(2),
                     maxFlow: maxFlow.toFixed(2),
                     avgFlow: avgFlow.toFixed(2)
                 };
@@ -214,6 +236,14 @@
                 );
             }
 
+            const isToday = timeRange === 'today';
+            const statusTitle = isActive 
+                ? (isToday ? 'Acqua in Ingresso' : 'Acqua in Ingresso (Fine Periodo)') 
+                : (isToday ? 'Flusso Assente' : 'Flusso Assente (Fine Periodo)');
+            const statusDesc = isActive
+                ? (isToday ? 'La rete diretta sta alimentando il serbatoio.' : "L'impianto era attivo all'ultimo rilevamento del periodo.")
+                : (isToday ? 'Nessuna fornitura idrica al momento.' : "Nessuna fornitura all'ultimo rilevamento del periodo.");
+
             return (
                 <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
                     <header className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
@@ -228,6 +258,15 @@
                         </button>
                     </header>
 
+                    {/* Selettore del Periodo */}
+                    <div className="flex justify-center">
+                        <div className="bg-slate-200 p-1 rounded-xl flex w-full sm:w-auto shadow-inner">
+                            <button onClick={() => setTimeRange('today')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'today' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Oggi</button>
+                            <button onClick={() => setTimeRange('yesterday')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'yesterday' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Ieri</button>
+                            <button onClick={() => setTimeRange('week')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'week' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>7 Giorni</button>
+                        </div>
+                    </div>
+
                     {error && (
                         <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3 text-red-600">
                             <i data-lucide="alert-circle"></i>
@@ -239,24 +278,20 @@
                         {/* Stato Impianto */}
                         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center p-8 text-center relative min-h-[320px]">
                             <div className={`absolute top-5 right-5 flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-full ${isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></div>
-                                {isActive ? 'ONLINE' : 'STANDBY'}
+                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 ' + (isToday ? 'animate-pulse' : '') : 'bg-slate-400'}`}></div>
+                                {isActive ? (isToday ? 'ONLINE' : 'ATTIVO') : 'STANDBY'}
                             </div>
 
                             <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 transition-all duration-700 ${isActive ? 'bg-blue-50 text-blue-500 shadow-[0_0_50px_rgba(59,130,246,0.2)]' : 'bg-slate-50 text-slate-300'}`}>
-                                {isActive ? <i data-lucide="waves" className="w-16 h-16 animate-bounce"></i> : <i data-lucide="power-off" className="w-16 h-16"></i>}
+                                {isActive ? <i data-lucide="waves" className={`w-16 h-16 ${isToday ? 'animate-bounce' : ''}`}></i> : <i data-lucide="power-off" className="w-16 h-16"></i>}
                             </div>
                             
-                            <h2 className="text-3xl font-extrabold text-slate-800 mb-2">
-                                {isActive ? 'Acqua in Ingresso' : 'Flusso Assente'}
-                            </h2>
-                            <p className="text-slate-500 font-medium">
-                                {isActive ? 'La rete diretta sta alimentando il serbatoio.' : 'Nessuna fornitura idrica al momento.'}
-                            </p>
+                            <h2 className="text-3xl font-extrabold text-slate-800 mb-2">{statusTitle}</h2>
+                            <p className="text-slate-500 font-medium">{statusDesc}</p>
                         </div>
 
                         <div className="space-y-6 flex flex-col">
-                            {/* Dati in tempo reale */}
+                            {/* Dati Generali */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex flex-col justify-center">
                                     <div className="flex items-center gap-2 text-slate-400 mb-2">
@@ -295,7 +330,7 @@
                                         <i data-lucide="history" className="w-5 h-5"></i>
                                         <h3 className="font-semibold text-sm uppercase tracking-wider">Ultime Letture</h3>
                                     </div>
-                                    {lastUpdate && (
+                                    {lastUpdate && isToday && (
                                         <span className="text-xs font-semibold text-green-500 bg-green-50 px-2 py-1 rounded-md flex items-center gap-1">
                                             <i data-lucide="check-circle-2" className="w-3 h-3"></i> 
                                             {lastUpdate.toLocaleTimeString()}
@@ -330,7 +365,7 @@
                                 <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
                                     <i data-lucide="clipboard-list" className="w-5 h-5"></i>
                                 </div>
-                                <h3 className="font-bold text-lg">Statistiche Principali</h3>
+                                <h3 className="font-bold text-lg">Statistiche {timeRange === 'today' ? 'di Oggi' : timeRange === 'yesterday' ? 'di Ieri' : 'degli ultimi 7 Giorni'}</h3>
                             </div>
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -343,7 +378,7 @@
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Totale letture</p>
+                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Totale letture elaborate</p>
                                         <p className="text-lg font-bold text-slate-700">{stats.total} misurazioni</p>
                                     </div>
                                     <div>
@@ -372,32 +407,56 @@
                         </div>
                     )}
 
-                    {window.Recharts && (
+                    {window.Recharts && chartData.length > 0 && (
                         <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 mt-6">
-                            <div className="flex items-center gap-3 text-slate-700 mb-6 border-b border-slate-100 pb-4">
-                                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                                    <i data-lucide="bar-chart-2" className="w-5 h-5"></i>
+                            <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
+                                <div className="flex items-center gap-3 text-slate-700">
+                                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                                        <i data-lucide="bar-chart-2" className="w-5 h-5"></i>
+                                    </div>
+                                    <h3 className="font-bold text-lg">Andamento Flusso e Accumulo</h3>
                                 </div>
-                                <h3 className="font-bold text-lg">Andamento Flusso nel Tempo</h3>
                             </div>
-                            <div className="h-72 w-full">
+                            <div className="h-80 w-full">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                    <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                                         <defs>
-                                            <linearGradient id="colorPortata" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                            <linearGradient id="colorLitri" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3}/>
+                                                <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
                                             </linearGradient>
                                         </defs>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                        <XAxis dataKey="orario" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} minTickGap={30} />
-                                        <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        
+                                        <XAxis dataKey="orario" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} minTickGap={40} />
+                                        
+                                        <YAxis yAxisId="left" stroke="#3b82f6" fontSize={12} tickLine={false} axisLine={false} />
+                                        <YAxis yAxisId="right" orientation="right" stroke="#0ea5e9" fontSize={12} tickLine={false} axisLine={false} />
+                                        
                                         <Tooltip 
-                                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                            labelStyle={{ color: '#64748b', fontWeight: 'bold', marginBottom: '4px' }}
+                                            content={({ active, payload, label }) => {
+                                                if (active && payload && payload.length) {
+                                                    return (
+                                                        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-4 rounded-2xl shadow-xl">
+                                                            <p className="font-bold text-slate-700 mb-2 border-b border-slate-100 pb-2">{label}</p>
+                                                            {payload.map((entry, index) => (
+                                                                <div key={index} className="flex items-center gap-2 text-sm font-medium my-1" style={{ color: entry.color }}>
+                                                                    <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: entry.color }}></div>
+                                                                    {entry.name}: <span className="font-bold">{Number(entry.value).toFixed(2)}</span> {entry.name === 'Portata' ? 'L/m' : 'L'}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
+                                            }}
                                         />
-                                        <Area type="monotone" dataKey="portata" name="Portata (L/min)" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#colorPortata)" activeDot={{ r: 6, strokeWidth: 0, fill: '#2563eb' }} />
-                                    </AreaChart>
+                                        
+                                        <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '14px', fontWeight: '600', color: '#475569' }} iconType="circle" />
+                                        
+                                        <Area yAxisId="right" type="monotone" dataKey="litri" name="Volume Accumulato" stroke="#0ea5e9" strokeWidth={2} fillOpacity={1} fill="url(#colorLitri)" activeDot={false} />
+                                        <Line yAxisId="left" type="monotone" dataKey="portata" name="Portata" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0, fill: '#3b82f6', className: "animate-ping absolute" }} />
+                                    </ComposedChart>
                                 </ResponsiveContainer>
                             </div>
                         </div>
