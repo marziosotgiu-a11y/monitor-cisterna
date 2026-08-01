@@ -31,7 +31,7 @@
             const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('water_supa_key') || '');
             const [isConfigured, setIsConfigured] = useState(!!localStorage.getItem('water_supa_url'));
 
-            const [timeRange, setTimeRange] = useState('today'); // 'today', 'yesterday', 'week'
+            const [timeRange, setTimeRange] = useState('today'); 
             
             const [currentFlow, setCurrentFlow] = useState(0);
             const [isActive, setIsActive] = useState(false);
@@ -65,7 +65,6 @@
                 if (!isConfigured) return;
 
                 try {
-                    // Impostazione del range di date
                     let start = new Date();
                     let end = new Date();
                     let isoStart = null;
@@ -87,29 +86,52 @@
                         isoStart = start.toISOString();
                     }
 
-                    let url = `${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}`;
-                    if (isoEnd) url += `&creato_il=lte.${isoEnd}`;
-                    url += `&limit=5000`; // Limite alzato per supportare una settimana di dati
+                    // --- NUOVA LOGICA DI IMPAGINAZIONE PER SUPERARE IL LIMITE DI 1000 RIGHE ---
+                    let allFetchedData = [];
+                    let currentOffset = 0;
+                    const fetchLimit = 1000;
+                    let keepFetching = true;
 
-                    const response = await fetch(url, {
-                        headers: {
-                            'apikey': supabaseKey,
-                            'Authorization': `Bearer ${supabaseKey}`,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=representation'
+                    while (keepFetching) {
+                        let url = `${supabaseUrl}?select=*&order=id.desc&creato_il=gte.${isoStart}`;
+                        if (isoEnd) url += `&creato_il=lte.${isoEnd}`;
+                        url += `&limit=${fetchLimit}&offset=${currentOffset}`;
+
+                        const response = await fetch(url, {
+                            headers: {
+                                'apikey': supabaseKey,
+                                'Authorization': `Bearer ${supabaseKey}`,
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=representation'
+                            }
+                        });
+
+                        if (!response.ok) throw new Error(`Errore: ${response.status}`);
+
+                        const chunk = await response.json();
+                        
+                        if (chunk && chunk.length > 0) {
+                            allFetchedData = [...allFetchedData, ...chunk];
+                            if (chunk.length < fetchLimit) {
+                                keepFetching = false; // Abbiamo raggiunto l'ultima pagina
+                            } else {
+                                currentOffset += fetchLimit; // C'è ancora roba, prepariamoci a chiedere la pagina successiva
+                            }
+                            // Sicurezza: fermati massimo a 15000 righe per non fondere il browser
+                            if (allFetchedData.length >= 15000) keepFetching = false; 
+                        } else {
+                            keepFetching = false;
                         }
-                    });
-
-                    if (!response.ok) throw new Error(`Errore: ${response.status}`);
-
-                    const data = await response.json();
+                    }
+                    // -------------------------------------------------------------------------
                     
+                    const data = allFetchedData;
+
                     if (data && data.length > 0) {
                         const latest = data[0];
                         setCurrentFlow(latest.portata || 0);
                         setIsActive(latest.in_funzione || false);
                         
-                        // Algoritmo di calcolo accurato dei litri basato sui picchi di fine sessione
                         let calculatedTotal = 0;
                         let peak = 0;
                         for (let i = data.length - 1; i >= 0; i--) {
@@ -126,7 +148,6 @@
                         setTotalLiters(calculatedTotal);
                         setHistory(data);
 
-                        // Formattazione per il grafico a doppio asse
                         const formattedForChart = data.map(item => {
                             const d = new Date(item.creato_il);
                             const orarioStr = timeRange === 'week' 
@@ -158,7 +179,6 @@
             useEffect(() => {
                 fetchData();
                 let interval;
-                // Aggiorna in tempo reale solo se stiamo guardando "Oggi"
                 if (isConfigured && timeRange === 'today') {
                     interval = setInterval(fetchData, 3000);
                 }
@@ -180,12 +200,8 @@
                 const startDate = new Date(oldest.creato_il);
                 const endDate = new Date(newest.creato_il);
                 
-                const formatDate = (d) => {
-                    const time = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-                    const date = d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
-                    return `${time} del ${date}`;
-                };
-
+                const formatTimeOnly = (d) => d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                
                 const activeReadings = history.filter(r => r.in_funzione);
                 const activeCount = activeReadings.length;
                 
@@ -194,8 +210,8 @@
                 const avgFlow = activeCount > 0 ? (sumFlowActive / activeCount) : 0;
 
                 return {
-                    start: formatDate(startDate),
-                    end: formatDate(endDate),
+                    startTime: formatTimeOnly(startDate),
+                    endTime: formatTimeOnly(endDate),
                     total: history.length,
                     active: activeCount,
                     liters: totalLiters.toFixed(2),
@@ -258,7 +274,6 @@
                         </button>
                     </header>
 
-                    {/* Selettore del Periodo */}
                     <div className="flex justify-center">
                         <div className="bg-slate-200 p-1 rounded-xl flex w-full sm:w-auto shadow-inner">
                             <button onClick={() => setTimeRange('today')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'today' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Oggi</button>
@@ -358,49 +373,75 @@
                         </div>
                     </div>
 
-                    {/* Sezione Statistiche Principali */}
+                    {/* NUOVA SEZIONE STATISTICHE MODERNIZZATA */}
                     {stats && (
-                        <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 mt-6">
-                            <div className="flex items-center gap-3 text-slate-700 mb-6 border-b border-slate-100 pb-4">
-                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
-                                    <i data-lucide="clipboard-list" className="w-5 h-5"></i>
-                                </div>
-                                <h3 className="font-bold text-lg">Statistiche {timeRange === 'today' ? 'di Oggi' : timeRange === 'yesterday' ? 'di Ieri' : 'degli ultimi 7 Giorni'}</h3>
+                        <div>
+                            <div className="flex items-center gap-3 text-slate-700 mt-8 mb-4">
+                                <h3 className="font-bold text-xl ml-2">Sintesi {timeRange === 'today' ? 'di Oggi' : timeRange === 'yesterday' ? 'di Ieri' : 'degli ultimi 7 Giorni'}</h3>
                             </div>
                             
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-4">
-                                    <div>
-                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Periodo di rilevazione</p>
-                                        <p className="text-sm font-medium text-slate-700">
-                                            Da <span className="font-bold">{stats.start}</span><br/>
-                                            alle <span className="font-bold">{stats.end}</span>
-                                        </p>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                {/* Card 1: Volume */}
+                                <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-3xl p-6 text-white shadow-lg shadow-blue-200/50 relative overflow-hidden">
+                                    <div className="absolute -right-4 -top-4 opacity-10">
+                                        <i data-lucide="waves" className="w-40 h-40"></i>
                                     </div>
-                                    <div>
-                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Totale letture elaborate</p>
-                                        <p className="text-lg font-bold text-slate-700">{stats.total} misurazioni</p>
+                                    <p className="text-blue-100 font-semibold text-sm uppercase tracking-wider mb-6 relative z-10">Volume Erogato</p>
+                                    <div className="flex items-baseline gap-2 mb-2 relative z-10">
+                                        <span className="text-5xl font-black">{stats.liters}</span>
+                                        <span className="text-xl font-medium text-blue-200">L</span>
                                     </div>
-                                    <div>
-                                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">Stato del sistema</p>
-                                        <p className="text-sm font-medium text-slate-700">
-                                            L'impianto è risultato in funzione in <span className="font-bold text-blue-600">{stats.active}</span> su {stats.total} rilevazioni.
-                                        </p>
+                                    <div className="text-sm text-blue-100 flex items-center gap-2 mt-6 pt-4 border-t border-blue-400/30 relative z-10">
+                                        <i data-lucide="clock" className="w-4 h-4"></i>
+                                        <span>Dalle {stats.startTime} alle {stats.endTime}</span>
                                     </div>
                                 </div>
-                                
-                                <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                                        <p className="text-sm text-slate-500 font-semibold">Litri totali caricati</p>
-                                        <p className="text-lg font-bold text-blue-600">{stats.liters} L</p>
+
+                                {/* Card 2: Analisi Flusso */}
+                                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-6">
+                                            <p className="text-slate-400 font-semibold text-sm uppercase tracking-wider">Flusso Idrico</p>
+                                            <div className="p-2 bg-indigo-50 text-indigo-500 rounded-xl">
+                                                <i data-lucide="activity" className="w-5 h-5"></i>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-6">
+                                            <div>
+                                                <p className="text-sm font-medium text-slate-400 mb-1">Media Flusso Attivo</p>
+                                                <p className="text-3xl font-bold text-slate-800">{stats.avgFlow} <span className="text-sm font-semibold text-slate-400">L/m</span></p>
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-medium text-slate-400 mb-1">Picco Massimo Registrato</p>
+                                                <p className="text-3xl font-bold text-slate-800">{stats.maxFlow} <span className="text-sm font-semibold text-slate-400">L/m</span></p>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                                        <p className="text-sm text-slate-500 font-semibold">Portata max raggiunta</p>
-                                        <p className="text-lg font-bold text-slate-700">{stats.maxFlow} <span className="text-xs font-normal text-slate-400">L/m</span></p>
-                                    </div>
-                                    <div className="flex justify-between items-center pb-1">
-                                        <p className="text-sm text-slate-500 font-semibold">Portata media (attiva)</p>
-                                        <p className="text-lg font-bold text-slate-700">{stats.avgFlow} <span className="text-xs font-normal text-slate-400">L/m</span></p>
+                                </div>
+
+                                {/* Card 3: Affidabilità e Rilevazioni */}
+                                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-6">
+                                            <p className="text-slate-400 font-semibold text-sm uppercase tracking-wider">Lavoro Impianto</p>
+                                            <div className="p-2 bg-emerald-50 text-emerald-500 rounded-xl">
+                                                <i data-lucide="check-circle-2" className="w-5 h-5"></i>
+                                            </div>
+                                        </div>
+                                        <div className="mb-8">
+                                            <p className="text-4xl font-black text-slate-800">{stats.total}</p>
+                                            <p className="text-sm font-medium text-slate-500 mt-1">Pacchetti dati elaborati</p>
+                                        </div>
+                                        
+                                        <div>
+                                            <div className="flex justify-between items-end mb-2">
+                                                <p className="text-sm font-bold text-slate-600">Tempo di Attività</p>
+                                                <p className="text-xs font-bold text-emerald-500">{stats.active} / {stats.total}</p>
+                                            </div>
+                                            <div className="w-full bg-slate-100 rounded-full h-3">
+                                                <div className="bg-emerald-500 h-3 rounded-full transition-all duration-1000" style={{ width: `${(stats.active / stats.total) * 100 || 0}%` }}></div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
