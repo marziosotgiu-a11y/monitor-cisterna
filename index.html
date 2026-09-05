@@ -36,12 +36,14 @@
 
             const [timeRange, setTimeRange] = useState('today'); 
             
+            // STATO IN TEMPO REALE (Indipendente dal tempo)
             const [currentFlow, setCurrentFlow] = useState(0);
             const [isActive, setIsActive] = useState(false);
-            const [totalLiters, setTotalLiters] = useState(0);
             const [currentLevel, setCurrentLevel] = useState(0); 
-            const [history, setHistory] = useState([]);
             
+            // STORICO (Dipendente dal tempo)
+            const [totalLiters, setTotalLiters] = useState(0);
+            const [history, setHistory] = useState([]);
             const [chartData, setChartData] = useState([]); 
             const [lastUpdate, setLastUpdate] = useState(null);
             const [error, setError] = useState(null);
@@ -70,6 +72,27 @@
                 if (!isConfigured) return;
 
                 try {
+                    // 1. FETCH STATO ASSOLUTO (Livello, Flusso attuale) - Ignora il filtro data
+                    const resLive = await fetch(`${supabaseUrl}?select=livello_cm,portata,in_funzione,creato_il&order=id.desc&limit=1`, {
+                        method: 'GET',
+                        cache: 'no-store',
+                        headers: {
+                            'apikey': supabaseKey,
+                            'Authorization': `Bearer ${supabaseKey}`
+                        }
+                    });
+                    
+                    if (resLive.ok) {
+                        const liveData = await resLive.json();
+                        if (liveData && liveData.length > 0) {
+                            setCurrentLevel(liveData[0].livello_cm || 0);
+                            setCurrentFlow(liveData[0].portata || 0);
+                            setIsActive(liveData[0].in_funzione || false);
+                            setLastUpdate(new Date(liveData[0].creato_il.replace(' ', 'T')));
+                        }
+                    }
+
+                    // 2. FETCH STORICO (Grafici e Litri) - Segue il filtro data
                     let start = new Date();
                     let end = new Date();
                     let isoStart = null;
@@ -106,15 +129,11 @@
                             cache: 'no-store',
                             headers: {
                                 'apikey': supabaseKey,
-                                'Authorization': `Bearer ${supabaseKey}`,
-                                'Content-Type': 'application/json',
-                                'Prefer': 'return=representation',
-                                'Cache-Control': 'no-cache, no-store, must-revalidate'
+                                'Authorization': `Bearer ${supabaseKey}`
                             }
                         });
 
                         if (!response.ok) throw new Error(`Errore: ${response.status}`);
-
                         const chunk = await response.json();
                         
                         if (chunk && chunk.length > 0) {
@@ -124,7 +143,6 @@
                             } else {
                                 currentOffset += fetchLimit; 
                             }
-                            if (allFetchedData.length >= 15000) keepFetching = false; 
                         } else {
                             keepFetching = false;
                         }
@@ -133,11 +151,6 @@
                     const data = allFetchedData;
 
                     if (data && data.length > 0) {
-                        const latest = data[0];
-                        setCurrentFlow(latest.portata || 0);
-                        setIsActive(latest.in_funzione || false);
-                        setCurrentLevel(latest.livello_cm || 0);
-                        
                         let calculatedTotal = 0;
                         let peak = 0;
                         for (let i = data.length - 1; i >= 0; i--) {
@@ -169,19 +182,15 @@
                         }).reverse(); 
                         
                         setChartData(formattedForChart);
-                        setLastUpdate(new Date());
                         setError(null);
                     } else {
+                        // Se non ci sono dati nello storico, azzera solo lo storico, NON IL LIVELLO!
                         setHistory([]);
                         setChartData([]);
-                        setCurrentFlow(0);
                         setTotalLiters(0);
-                        setCurrentLevel(0);
-                        setIsActive(false);
-                        setLastUpdate(new Date());
                     }
                 } catch (err) {
-                    setError("Impossibile connettersi al database. Verifica la rete o i dati API.");
+                    setError("Impossibile connettersi al database. Verifica la rete.");
                 }
             }, [supabaseUrl, supabaseKey, isConfigured, timeRange]);
             
@@ -202,21 +211,16 @@
 
             const stats = useMemo(() => {
                 if (!history || history.length === 0) return null;
-
                 const newest = history[0];
                 const oldest = history[history.length - 1];
-                
                 const safeOldestStr = oldest.creato_il.replace(' ', 'T');
                 const startDate = new Date(safeOldestStr);
-                
                 const safeNewestStr = newest.creato_il.replace(' ', 'T');
                 const endDate = new Date(safeNewestStr);
-                
                 const formatTimeOnly = (d) => d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
                 
                 const activeReadings = history.filter(r => r.in_funzione);
                 const activeCount = activeReadings.length;
-                
                 const maxFlow = Math.max(...history.map(r => Number(r.portata) || 0));
                 const sumFlowActive = activeReadings.reduce((sum, r) => sum + (Number(r.portata) || 0), 0);
                 const avgFlow = activeCount > 0 ? (sumFlowActive / activeCount) : 0;
@@ -232,7 +236,6 @@
                 };
             }, [history, totalLiters]);
 
-            // Calcoli Percentuale e Volume
             const levelPercent = Math.min(100, Math.max(0, (currentLevel / ALTEZZA_MAX_CM) * 100));
             const litriResidui = Math.max(0, currentLevel * LITRI_PER_CM);
 
@@ -240,28 +243,17 @@
                 return (
                     <div className="min-h-screen flex flex-col items-center justify-center p-4">
                         <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md w-full border border-slate-100">
-                            <div className="flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-full mb-6 mx-auto">
-                                <i data-lucide="droplets" className="w-8 h-8"></i>
-                            </div>
                             <h1 className="text-2xl font-bold text-center mb-2">Monitor Cisterna</h1>
-                            <p className="text-slate-500 text-center mb-8">Connetti il tuo database Supabase.</p>
-                            
                             <form onSubmit={handleSaveConfig} className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-semibold text-slate-700 mb-1">URL Tabella</label>
-                                    <input type="url" required placeholder="https://...supabase.co/rest/v1/lettura_acqua"
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                        value={supabaseUrl} onChange={(e) => setSupabaseUrl(e.target.value)} />
+                                    <input type="url" required className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl" value={supabaseUrl} onChange={(e) => setSupabaseUrl(e.target.value)} />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-semibold text-slate-700 mb-1">Chiave API (anon)</label>
-                                    <input type="password" required placeholder="eyJhb..."
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                        value={supabaseKey} onChange={(e) => setSupabaseKey(e.target.value)} />
+                                    <input type="password" required className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl" value={supabaseKey} onChange={(e) => setSupabaseKey(e.target.value)} />
                                 </div>
-                                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition-colors mt-2 shadow-lg shadow-blue-200">
-                                    Connetti
-                                </button>
+                                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl mt-2">Connetti</button>
                             </form>
                         </div>
                     </div>
@@ -280,77 +272,51 @@
                 <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
                     <header className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                         <div className="flex items-center gap-3">
-                            <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl shadow-sm">
-                                <i data-lucide="droplets"></i>
-                            </div>
+                            <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl shadow-sm"><i data-lucide="droplets"></i></div>
                             <h1 className="text-xl font-bold">Cisterna Casa</h1>
                         </div>
-                        <button onClick={handleResetConfig} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-all" title="Impostazioni">
-                            <i data-lucide="settings"></i>
-                        </button>
+                        <button onClick={handleResetConfig} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-xl transition-all"><i data-lucide="settings"></i></button>
                     </header>
 
                     <div className="flex justify-center">
                         <div className="bg-slate-200 p-1 rounded-xl flex w-full sm:w-auto shadow-inner">
-                            <button onClick={() => setTimeRange('today')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'today' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Oggi</button>
-                            <button onClick={() => setTimeRange('yesterday')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'yesterday' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Ieri</button>
-                            <button onClick={() => setTimeRange('week')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg transition-all ${timeRange === 'week' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>7 Giorni</button>
+                            <button onClick={() => setTimeRange('today')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg ${timeRange === 'today' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Oggi</button>
+                            <button onClick={() => setTimeRange('yesterday')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg ${timeRange === 'yesterday' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>Ieri</button>
+                            <button onClick={() => setTimeRange('week')} className={`flex-1 sm:px-8 py-2.5 text-sm font-bold rounded-lg ${timeRange === 'week' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}>7 Giorni</button>
                         </div>
                     </div>
-
-                    {error && (
-                        <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3 text-red-600">
-                            <i data-lucide="alert-circle"></i>
-                            <p className="font-medium">{error}</p>
-                        </div>
-                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center p-8 text-center relative min-h-[320px]">
                             <div className={`absolute top-5 right-5 flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-full ${isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 ' + (isToday ? 'animate-pulse' : '') : 'bg-slate-400'}`}></div>
-                                {isActive ? (isToday ? 'ONLINE' : 'ATTIVO') : 'STANDBY'}
+                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></div>
+                                {isActive ? 'ONLINE' : 'STANDBY'}
                             </div>
-
-                            <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 transition-all duration-700 ${isActive ? 'bg-blue-50 text-blue-500 shadow-[0_0_50px_rgba(59,130,246,0.2)]' : 'bg-slate-50 text-slate-300'}`}>
-                                {isActive ? <i data-lucide="waves" className={`w-16 h-16 ${isToday ? 'animate-bounce' : ''}`}></i> : <i data-lucide="power-off" className="w-16 h-16"></i>}
+                            <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 ${isActive ? 'bg-blue-50 text-blue-500' : 'bg-slate-50 text-slate-300'}`}>
+                                {isActive ? <i data-lucide="waves" className="w-16 h-16 animate-bounce"></i> : <i data-lucide="power-off" className="w-16 h-16"></i>}
                             </div>
-                            
                             <h2 className="text-3xl font-extrabold text-slate-800 mb-2">{statusTitle}</h2>
                             <p className="text-slate-500 font-medium">{statusDesc}</p>
                         </div>
 
                         <div className="space-y-4 flex flex-col">
-                            
-                            {/* CARD LIVELLO CON I LITRI */}
                             <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex items-center justify-between relative overflow-hidden">
-                                <div className="absolute -right-4 -bottom-4 opacity-5 text-cyan-600">
-                                    <i data-lucide="database" className="w-40 h-40"></i>
-                                </div>
+                                <div className="absolute -right-4 -bottom-4 opacity-5 text-cyan-600"><i data-lucide="database" className="w-40 h-40"></i></div>
                                 <div>
                                     <div className="flex items-center gap-2 text-cyan-500 mb-2 relative z-10">
                                         <i data-lucide="database" className="w-5 h-5"></i>
                                         <h3 className="font-semibold text-sm uppercase tracking-wider">Livello Cisterna</h3>
                                     </div>
                                     <div className="flex items-baseline gap-1 relative z-10">
-                                        <span className="text-4xl font-black tracking-tight text-cyan-600">
-                                            {currentLevel.toFixed(1)}
-                                        </span>
+                                        <span className="text-4xl font-black tracking-tight text-cyan-600">{currentLevel.toFixed(1)}</span>
                                         <span className="text-sm font-bold text-slate-400">cm</span>
                                     </div>
-                                    <p className="text-sm font-bold text-cyan-600 mt-1 relative z-10">
-                                        Volume: {litriResidui.toFixed(0)} / {VOLUME_MAX_LITRI} L
-                                    </p>
-                                    <p className="text-xs font-medium text-slate-500 mt-0.5 relative z-10">
-                                        Capacità al {levelPercent.toFixed(0)}%
-                                    </p>
+                                    <p className="text-sm font-bold text-cyan-600 mt-1 relative z-10">Volume: {litriResidui.toFixed(0)} / {VOLUME_MAX_LITRI} L</p>
+                                    <p className="text-xs font-medium text-slate-500 mt-0.5 relative z-10">Capacità al {levelPercent.toFixed(0)}%</p>
                                 </div>
                                 
                                 <div className="w-20 h-28 bg-slate-50 rounded-2xl border-[3px] border-slate-200 overflow-hidden relative shadow-inner z-10">
-                                    <div 
-                                        className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-cyan-500 to-blue-400 transition-all duration-1000 ease-in-out"
-                                        style={{ height: `${levelPercent}%` }}
-                                    >
+                                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-cyan-500 to-blue-400 transition-all duration-1000 ease-in-out" style={{ height: `${levelPercent}%` }}>
                                         <div className="w-full h-2 bg-white/30 absolute top-0"></div>
                                     </div>
                                 </div>
@@ -358,30 +324,16 @@
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex flex-col justify-center">
-                                    <div className="flex items-center gap-2 text-slate-400 mb-2">
-                                        <i data-lucide="activity" className="w-5 h-5"></i>
-                                        <h3 className="font-semibold text-sm uppercase tracking-wider">Portata</h3>
-                                    </div>
+                                    <div className="flex items-center gap-2 text-slate-400 mb-2"><i data-lucide="activity" className="w-5 h-5"></i><h3 className="font-semibold text-sm uppercase tracking-wider">Portata</h3></div>
                                     <div className="flex items-baseline gap-1">
-                                        <span className={`text-3xl font-black tracking-tight ${isActive ? 'text-blue-600' : 'text-slate-300'}`}>
-                                            {currentFlow.toFixed(1)}
-                                        </span>
+                                        <span className={`text-3xl font-black tracking-tight ${isActive ? 'text-blue-600' : 'text-slate-300'}`}>{currentFlow.toFixed(1)}</span>
                                         <span className="text-xs font-bold text-slate-400">L/m</span>
                                     </div>
                                 </div>
-
                                 <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex flex-col justify-center relative overflow-hidden">
-                                    <div className="absolute -right-4 -bottom-4 opacity-5 text-blue-600">
-                                        <i data-lucide="glass-water" className="w-32 h-32"></i>
-                                    </div>
-                                    <div className="flex items-center gap-2 text-blue-500 mb-2 relative z-10">
-                                        <i data-lucide="glass-water" className="w-5 h-5"></i>
-                                        <h3 className="font-semibold text-sm uppercase tracking-wider">Caricati</h3>
-                                    </div>
+                                    <div className="flex items-center gap-2 text-blue-500 mb-2 relative z-10"><i data-lucide="glass-water" className="w-5 h-5"></i><h3 className="font-semibold text-sm uppercase tracking-wider">Caricati Oggi</h3></div>
                                     <div className="flex items-baseline gap-1 relative z-10">
-                                        <span className={`text-3xl font-black tracking-tight ${totalLiters > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
-                                            {totalLiters.toFixed(1)}
-                                        </span>
+                                        <span className={`text-3xl font-black tracking-tight ${totalLiters > 0 ? 'text-blue-600' : 'text-slate-300'}`}>{totalLiters.toFixed(1)}</span>
                                         <span className="text-xs font-bold text-slate-400">Litri</span>
                                     </div>
                                 </div>
@@ -389,15 +341,9 @@
 
                             <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 flex-grow">
                                 <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
-                                    <div className="flex items-center gap-2 text-slate-400">
-                                        <i data-lucide="history" className="w-5 h-5"></i>
-                                        <h3 className="font-semibold text-sm uppercase tracking-wider">Ultime Letture</h3>
-                                    </div>
+                                    <div className="flex items-center gap-2 text-slate-400"><i data-lucide="history" className="w-5 h-5"></i><h3 className="font-semibold text-sm uppercase tracking-wider">Ultime Letture</h3></div>
                                     {lastUpdate && isToday && (
-                                        <span className="text-xs font-semibold text-green-500 bg-green-50 px-2 py-1 rounded-md flex items-center gap-1">
-                                            <i data-lucide="check-circle-2" className="w-3 h-3"></i> 
-                                            {lastUpdate.toLocaleTimeString()}
-                                        </span>
+                                        <span className="text-xs font-semibold text-green-500 bg-green-50 px-2 py-1 rounded-md flex items-center gap-1"><i data-lucide="check-circle-2" className="w-3 h-3"></i> {lastUpdate.toLocaleTimeString()}</span>
                                     )}
                                 </div>
                                 <div className="space-y-2">
@@ -407,106 +353,25 @@
                                             <div key={record.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl transition-colors border border-transparent hover:border-slate-100">
                                                 <span className="text-slate-400 font-mono text-sm">{new Date(safeDateStr).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>
                                                 <div className="flex gap-4">
-                                                    <span className="font-bold text-cyan-600 w-12 text-right">
-                                                        {record.livello_cm ? Number(record.livello_cm).toFixed(0) : '0'} <span className="text-xs opacity-70">cm</span>
-                                                    </span>
-                                                    <span className={`font-bold w-16 text-right ${record.in_funzione ? 'text-blue-600' : 'text-slate-400'}`}>
-                                                        {Number(record.portata).toFixed(1)} <span className="text-xs opacity-70">L/m</span>
-                                                    </span>
-                                                    <span className="font-bold text-slate-600 w-16 text-right">
-                                                        {record.litri_caricati ? Number(record.litri_caricati).toFixed(1) : '0.0'} <span className="text-xs opacity-70">L</span>
-                                                    </span>
+                                                    <span className="font-bold text-cyan-600 w-12 text-right">{record.livello_cm ? Number(record.livello_cm).toFixed(0) : '0'} <span className="text-xs opacity-70">cm</span></span>
+                                                    <span className={`font-bold w-16 text-right ${record.in_funzione ? 'text-blue-600' : 'text-slate-400'}`}>{Number(record.portata).toFixed(1)} <span className="text-xs opacity-70">L/m</span></span>
+                                                    <span className="font-bold text-slate-600 w-16 text-right">{record.litri_caricati ? Number(record.litri_caricati).toFixed(1) : '0.0'} <span className="text-xs opacity-70">L</span></span>
                                                 </div>
                                             </div>
                                         )
                                     }) : (
-                                        <p className="text-slate-400 text-sm text-center py-6">Nessun dato registrato</p>
+                                        <p className="text-slate-400 text-sm text-center py-6">Nessun evento registrato per questo periodo</p>
                                     )}
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    {stats && (
-                        <div>
-                            <div className="flex items-center gap-3 text-slate-700 mt-8 mb-4">
-                                <h3 className="font-bold text-xl ml-2">Sintesi {timeRange === 'today' ? 'di Oggi' : timeRange === 'yesterday' ? 'di Ieri' : 'degli ultimi 7 Giorni'}</h3>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-3xl p-6 text-white shadow-lg shadow-blue-200/50 relative overflow-hidden">
-                                    <div className="absolute -right-4 -top-4 opacity-10">
-                                        <i data-lucide="waves" className="w-40 h-40"></i>
-                                    </div>
-                                    <p className="text-blue-100 font-semibold text-sm uppercase tracking-wider mb-6 relative z-10">Volume Erogato</p>
-                                    <div className="flex items-baseline gap-2 mb-2 relative z-10">
-                                        <span className="text-5xl font-black">{stats.liters}</span>
-                                        <span className="text-xl font-medium text-blue-200">L</span>
-                                    </div>
-                                    <div className="text-sm text-blue-100 flex items-center gap-2 mt-6 pt-4 border-t border-blue-400/30 relative z-10">
-                                        <i data-lucide="clock" className="w-4 h-4"></i>
-                                        <span>Dalle {stats.startTime} alle {stats.endTime}</span>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
-                                    <div>
-                                        <div className="flex items-center justify-between mb-6">
-                                            <p className="text-slate-400 font-semibold text-sm uppercase tracking-wider">Flusso Idrico</p>
-                                            <div className="p-2 bg-indigo-50 text-indigo-500 rounded-xl">
-                                                <i data-lucide="activity" className="w-5 h-5"></i>
-                                            </div>
-                                        </div>
-                                        <div className="space-y-6">
-                                            <div>
-                                                <p className="text-sm font-medium text-slate-400 mb-1">Media Flusso Attivo</p>
-                                                <p className="text-3xl font-bold text-slate-800">{stats.avgFlow} <span className="text-sm font-semibold text-slate-400">L/m</span></p>
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-medium text-slate-400 mb-1">Picco Massimo Registrato</p>
-                                                <p className="text-3xl font-bold text-slate-800">{stats.maxFlow} <span className="text-sm font-semibold text-slate-400">L/m</span></p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between">
-                                    <div>
-                                        <div className="flex items-center justify-between mb-6">
-                                            <p className="text-slate-400 font-semibold text-sm uppercase tracking-wider">Lavoro Impianto</p>
-                                            <div className="p-2 bg-emerald-50 text-emerald-500 rounded-xl">
-                                                <i data-lucide="check-circle-2" className="w-5 h-5"></i>
-                                            </div>
-                                        </div>
-                                        <div className="mb-8">
-                                            <p className="text-4xl font-black text-slate-800">{stats.total}</p>
-                                            <p className="text-sm font-medium text-slate-500 mt-1">Pacchetti dati elaborati</p>
-                                        </div>
-                                        
-                                        <div>
-                                            <div className="flex justify-between items-end mb-2">
-                                                <p className="text-sm font-bold text-slate-600">Tempo di Attività</p>
-                                                <p className="text-xs font-bold text-emerald-500">{stats.active} / {stats.total}</p>
-                                            </div>
-                                            <div className="w-full bg-slate-100 rounded-full h-3">
-                                                <div className="bg-emerald-500 h-3 rounded-full transition-all duration-1000" style={{ width: `${(stats.active / stats.total) * 100 || 0}%` }}></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
                     {window.Recharts && chartData.length > 0 && (
                         <div className="bg-white rounded-3xl shadow-sm p-6 border border-slate-100 mt-6">
-                            <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
-                                <div className="flex items-center gap-3 text-slate-700">
-                                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                                        <i data-lucide="bar-chart-2" className="w-5 h-5"></i>
-                                    </div>
-                                    <h3 className="font-bold text-lg">Andamento Flusso e Accumulo</h3>
-                                </div>
+                            <div className="flex items-center gap-3 text-slate-700 mb-6 border-b border-slate-100 pb-4">
+                                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><i data-lucide="bar-chart-2" className="w-5 h-5"></i></div>
+                                <h3 className="font-bold text-lg">Andamento Flusso e Accumulo</h3>
                             </div>
                             <div className="h-80 w-full">
                                 <ResponsiveContainer width="100%" height="100%">
@@ -518,35 +383,13 @@
                                             </linearGradient>
                                         </defs>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                        
                                         <XAxis dataKey="orario" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} minTickGap={40} />
-                                        
                                         <YAxis yAxisId="left" stroke="#3b82f6" fontSize={12} tickLine={false} axisLine={false} />
                                         <YAxis yAxisId="right" orientation="right" stroke="#0ea5e9" fontSize={12} tickLine={false} axisLine={false} />
-                                        
-                                        <Tooltip 
-                                            content={({ active, payload, label }) => {
-                                                if (active && payload && payload.length) {
-                                                    return (
-                                                        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-4 rounded-2xl shadow-xl">
-                                                            <p className="font-bold text-slate-700 mb-2 border-b border-slate-100 pb-2">{label}</p>
-                                                            {payload.map((entry, index) => (
-                                                                <div key={index} className="flex items-center gap-2 text-sm font-medium my-1" style={{ color: entry.color }}>
-                                                                    <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: entry.color }}></div>
-                                                                    {entry.name}: <span className="font-bold">{Number(entry.value).toFixed(2)}</span> {entry.name === 'Portata' ? 'L/m' : 'L'}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    );
-                                                }
-                                                return null;
-                                            }}
-                                        />
-                                        
+                                        <Tooltip />
                                         <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '14px', fontWeight: '600', color: '#475569' }} iconType="circle" />
-                                        
                                         <Area yAxisId="right" type="monotone" dataKey="litri" name="Volume Accumulato" stroke="#0ea5e9" strokeWidth={2} fillOpacity={1} fill="url(#colorLitri)" activeDot={false} />
-                                        <Line yAxisId="left" type="monotone" dataKey="portata" name="Portata" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0, fill: '#3b82f6', className: "animate-ping absolute" }} />
+                                        <Line yAxisId="left" type="monotone" dataKey="portata" name="Portata" stroke="#3b82f6" strokeWidth={3} dot={false} />
                                     </ComposedChart>
                                 </ResponsiveContainer>
                             </div>
@@ -555,7 +398,6 @@
                 </div>
             );
         }
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
