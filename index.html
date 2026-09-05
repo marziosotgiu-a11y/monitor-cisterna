@@ -25,9 +25,9 @@
         const { ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } = window.Recharts || {};
 
         // IMPOSTAZIONI REALI CISTERNA
-        const ALTEZZA_MAX_CM = 80; 
+        const ALTEZZA_MAX_CM = 85; 
         const LITRI_PER_CM = 8;
-        const VOLUME_MAX_LITRI = 640;
+        const VOLUME_MAX_LITRI = 500;
 
         function App() {
             const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('water_supa_url') || '');
